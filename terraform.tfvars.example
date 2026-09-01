@@ -1,0 +1,165 @@
+# ==============================================================================
+#  azure-key-vault — terraform.tfvars
+# ==============================================================================
+#  Copy this file to `terraform.tfvars`, set the values, then run:
+#      tofu init && tofu apply        (or:  terraform init && terraform apply)
+#
+# AUTHENTICATION — Azure:
+#   The azurerm (and azuread) providers authenticate to Microsoft Entra ID
+#   (Azure AD) and resolve credentials in this order: explicit OIDC, then
+#   client certificate, then client secret, then Managed Identity, then Azure
+#   CLI.
+#   Quick start: az login (then `az account set --subscription <id>`; `az
+#   login --use-device-code` for headless, `az login --service-principal -u
+#   <appId> -p <secret> --tenant <tenant>` for SP).
+#   Environment variables Terraform reads:
+#     ARM_SUBSCRIPTION_ID — Target subscription GUID; required for plan/apply in provider v4.x.
+#     ARM_TENANT_ID — Entra ID (Azure AD) tenant GUID.
+#     ARM_CLIENT_ID — App registration / service principal (or user-assigned MSI) client id.
+#     ARM_CLIENT_SECRET  (secret) — Service principal client secret (secret-based auth).
+#     ARM_CLIENT_CERTIFICATE_PATH — Path to the PKCS#12 (.pfx) client certificate.
+#   Full guide (auth + remote state):  docs/CONNECTING-PROVIDERS.md#azure
+#
+#  Secrets below read "REPLACE_ME" — never commit real secrets. Prefer
+#  TF_VAR_<name> environment variables or a secrets manager.
+#  Status: static-validated, live-test pending (see README.md).
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+#  REQUIRED — you must set these
+# ------------------------------------------------------------------------------
+
+# name  —  string  (REQUIRED)
+#   Globally-unique Key Vault name (3-24 chars, letters/digits/hyphens, starts
+#   with a letter, ends alphanumeric).
+#   Constraint: name must be 3-24 characters: letters, digits and hyphens,
+#   starting with a letter and ending alphanumeric.
+name                = "kv-iacbazaar-ex-001"
+
+# resource_group_name  —  string  (REQUIRED)
+#   Name of an existing resource group.
+resource_group_name = "rg-security-example"
+
+# location  —  string  (REQUIRED)
+#   Azure region for the vault.
+location            = "westeurope"
+
+# ------------------------------------------------------------------------------
+#  OPTIONAL — defaults shown; uncomment a line to override
+# ------------------------------------------------------------------------------
+
+# tenant_id  —  string  (optional, default: null)
+#   Entra tenant ID for the vault. Null = the tenant of the deploying
+#   credentials.
+# tenant_id = null
+
+# sku_name  —  string  (optional, default: "standard")
+#   Vault SKU: standard or premium (premium adds HSM-backed keys).
+#   Constraint: sku_name must be standard or premium.
+# sku_name = "standard"
+
+# purge_protection_enabled  —  bool  (optional, default: true)
+#   Block permanent deletion until the retention window elapses. Required for
+#   CMK scenarios; cannot be disabled once on. Set false only for ephemeral/test
+#   vaults.
+purge_protection_enabled   = false
+
+# soft_delete_retention_days  —  number  (optional, default: 90)
+#   Days a deleted vault/object is recoverable (7-90).
+#   Constraint: soft_delete_retention_days must be between 7 and 90.
+soft_delete_retention_days = 7
+
+# public_network_access_enabled  —  bool  (optional, default: true)
+#   Allow traffic over the public endpoint (still filtered by network_acls). Set
+#   false for private-endpoint-only vaults.
+# public_network_access_enabled = true
+
+# enabled_for_deployment  —  bool  (optional, default: false)
+#   Allow Azure VMs to retrieve certificates stored as secrets.
+# enabled_for_deployment = false
+
+# enabled_for_disk_encryption  —  bool  (optional, default: false)
+#   Allow Azure Disk Encryption to retrieve secrets and unwrap keys.
+# enabled_for_disk_encryption = false
+
+# enabled_for_template_deployment  —  bool  (optional, default: false)
+#   Allow ARM template deployments to retrieve secrets.
+# enabled_for_template_deployment = false
+
+# network_acls  —  object  (optional, default: {})
+#   Vault network ACLs. Default denies everything except trusted Azure services;
+#   add your CIDRs/subnets so deployments can reach the data plane. Note: the
+#   AzureServices bypass does not cover a Terraform runner, so when
+#   default_action = "Deny" you must allow-list the runner's public IP
+#   (ip_rules) or subnet (virtual_network_subnet_ids) to seed
+#   keys/secrets/certificates — the module enforces this at plan time.
+#   Constraint: network_acls.default_action must be Allow/Deny and bypass must
+#   be AzureServices/None.
+network_acls = {
+  default_action = "Allow" # tighten to "Deny" + ip_rules in production
+}
+
+# role_assignments  —  map  (optional, default: {})
+#   Azure RBAC role assignments scoped to this vault, keyed by a stable label.
+#   Use built-in roles such as 'Key Vault Administrator', 'Key Vault Secrets
+#   User', 'Key Vault Crypto Service Encryption User'.
+#   Constraint: role_assignments principal_type must be null, User, Group or
+#   ServicePrincipal.
+role_assignments = {
+  platform_admins = {
+    principal_id         = "00000000-0000-0000-0000-000000000001"
+    role_definition_name = "Key Vault Administrator"
+    principal_type       = "Group"
+  }
+  app_secrets_reader = {
+    principal_id         = "00000000-0000-0000-0000-000000000002"
+    role_definition_name = "Key Vault Secrets User"
+    principal_type       = "ServicePrincipal"
+  }
+}
+
+# keys  —  map  (optional, default: {})
+#   Managed keys keyed by key name. RSA keys use key_size; EC keys use curve.
+#   rotation_policy = {} enables the default 90-day auto-rotation.
+#   Constraint: keys key_type must be RSA, RSA-HSM, EC or EC-HSM.
+keys = {
+  "cmk-storage" = {
+    rotation_policy = {}
+  }
+}
+
+# secrets  —  map  (optional, sensitive, default: {})
+#   Secrets keyed by secret name. Values are sensitive but still land in
+#   Terraform state — prefer seeding placeholders and rotating out-of-band.
+secrets = {
+  "example-api-key" = {
+    value        = "placeholder-rotate-me"
+    content_type = "text/plain"
+  }
+}
+
+# self_signed_certificates  —  map  (optional, default: {})
+#   Self-signed certificate scaffolding keyed by certificate name (dev/test or
+#   bootstrap use; swap the issuer for a CA in production).
+#   Constraint: self_signed_certificates: validity_in_months must be 1-1200 and
+#   key_size 2048/3072/4096.
+# self_signed_certificates = {}
+
+# diagnostic_settings  —  object  (optional, default: {})
+#   Audit logging to Log Analytics, a storage account and/or Event Hub.
+#   Constraint: diagnostic_settings.enabled requires at least one destination
+#   (Log Analytics, storage account or Event Hub).
+# diagnostic_settings = {}
+
+# private_endpoint  —  object  (optional, default: null)
+#   Optional private endpoint for the vault data plane: { subnet_id,
+#   private_dns_zone_ids (privatelink.vaultcore.azure.net), name? }.
+# private_endpoint = null
+
+# tags  —  map  (optional, default: {})
+#   Tags applied to all resources.
+tags = {
+  environment = "example"
+  managed_by  = "iac-bazaar"
+}
